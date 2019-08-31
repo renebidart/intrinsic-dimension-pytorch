@@ -28,16 +28,23 @@ def train_epoch_vae(epoch,
     model.train()
     total = 0
     train_loss = 0
+    train_kld = 0
+    train_mse = 0
     for batch_idx, (data, label) in enumerate(train_loader):
         data = data.to(device).float()
         optimizer.zero_grad()
         output = model(data)
-        loss = loss_fn(output, data)
+        loss, kld, mse = loss_fn(output, data)
         loss.backward()
         train_loss += loss.item()
+        train_kld += kld.item()
+        train_mse += mse.item()
         optimizer.step()
         total += data.size(0)
-    return {'loss':train_loss/total}
+        
+    return {'loss':train_loss/total, 
+             'kld': train_kld/total,
+             'mse': train_mse/total}
     
     
 def val_epoch_vae(epoch,
@@ -49,14 +56,19 @@ def val_epoch_vae(epoch,
     model.eval()
     with torch.no_grad():
         val_loss = 0
+        val_kld = 0
+        val_mse = 0        
         for batch_idx, (data, label) in enumerate(loader):
             data = data.to(device).float()
             output = model(data)
-            loss = loss_fn(output, data)
+            loss, kld, mse = loss_fn(output, data)
             val_loss += loss.item()
+            val_kld += kld.item()
+            val_mse += mse.item()
             total += data.size(0)
-    return {'loss': val_loss/total}
-
+    return {'loss':val_loss/total, 
+             'kld': val_kld/total,
+             'mse': val_mse/total}
             
 def train_vae(model, 
               train_loader, 
@@ -77,13 +89,13 @@ def train_vae(model,
         logvar = mu_logvar[:, int(mu_logvar.size()[1]/2):]
 
         KLD = -0.5 * torch.sum(1 + 2 * logvar - mu.pow(2) - (2 * logvar).exp())
-        BCE = F.mse_loss(recon_x, target, reduction='sum')
+        MSE = F.mse_loss(recon_x, target, reduction='sum')
 
-        loss = BCE + KLD_weight*KLD
-        return loss
+        loss = MSE + KLD_weight*KLD
+        return loss, KLD, MSE
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = lr_scheduler.StepLR(optimizer, step_size=int(epochs/3), gamma=0.2)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=int(np.ceil(epochs/3)), gamma=0.2)
 
     metrics = {}    
     metrics['train'] = {}
@@ -130,13 +142,16 @@ def train_vae(model,
             
             
             
-            
-            
-            
-            
-            
-            
-            
+def save_checkpoint(state, is_best, model_name, PATH, epoch=None):
+    model_folder = Path(f'{PATH}/{model_name}')
+    model_folder.mkdir(parents=True, exist_ok=True)
+    save_path = model_folder / f'e{epoch}_ckpnt.pth.tar'
+    torch.save(state, save_path)
+    if is_best:
+        best_path = model_folder / 'model_best.pth.tar'
+        shutil.copyfile(save_path, best_path)
+
+                 
             
 
 
@@ -273,11 +288,3 @@ def train_vae(model,
 #         if verbose==2:
 #             print(f'Train acc: {train_metrics["acc"]}, Valid acc: {val_metrics["acc"]}')
 #     return metrics
-
-
-def save_checkpoint(state, is_best, model_name, PATH, epoch=None):
-    save_path = str(PATH)+'/'+str(model_name)+'_E_st'+str(epoch)+'_ckpnt.pth.tar'
-    torch.save(state, save_path)
-    if is_best:
-        best_path = f'{PATH}/{model_name}_model_best.pth.tar'
-        shutil.copyfile(save_path, best_path)
